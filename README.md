@@ -65,7 +65,7 @@ pnpm install
 pnpm dev:web
 ```
 
-Open `http://localhost:3000`. The frontend talks to the API through its development rewrite. For durable PostgreSQL + pgvector, run `docker compose up -d database`, then export the `DATABASE_URL` shown in `apps/api/.env.example` before starting the API.
+Open `http://localhost:3000`. The frontend talks to the API through its development rewrite. For the complete durable stack (web, API, PostgreSQL + pgvector), run `docker compose up --build`. The API automatically switches to PostgreSQL and the frontend routes requests to the containerised API. See [DEPLOYMENT.md](DEPLOYMENT.md) for local lifecycle commands and the Cloud Run sequence.
 
 ## Test
 
@@ -75,7 +75,6 @@ PYTHONPATH=apps/api python3 -m unittest discover -s apps/api/tests -v
 
 The tests cover Scenarios A–C, permission-filtered retrieval, and the governed source ingestion/conflict-detection path.
 
-## Deployment follow-up
+## Deployment
 
-- Run the API on Cloud Run with verified OIDC identity in place of development headers.
-- Configure a Google Cloud project and Application Default Credentials to activate the Vertex adapter.
+The repository ships non-root API/web containers, Cloud Build definitions, a configurable API origin and a full local Compose stack. Cloud Run needs your Google Cloud project, database secret and production identity configuration; the exact deployment sequence is in [DEPLOYMENT.md](DEPLOYMENT.md).
