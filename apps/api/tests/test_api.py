@@ -46,6 +46,22 @@ class ApiSecurityAndResolutionTests(unittest.TestCase):
         self.assertIn("200%", answer.json()["answer"])
         self.assertEqual(answer.json()["resolution"]["expert"]["id"], "exp-anna")
 
+    def test_pipeline_overview_is_scoped_and_tracks_question_events(self):
+        headers = {"x-resolve-user": "demo-consultant", "x-resolve-roles": "hr,internal"}
+        asked = self.client.post(
+            "/v1/questions/answer",
+            headers=headers,
+            json={"question": "Can a Belgian employee work remotely from Spain?", "employee_country": "BE"},
+        )
+        self.assertEqual(asked.status_code, 200)
+
+        overview = self.client.get("/v1/knowledge/overview", headers=headers)
+        self.assertEqual(overview.status_code, 200)
+        body = overview.json()
+        self.assertEqual(body["counts"]["sources"], 5)
+        self.assertEqual(body["counts"]["open_conflicts"], 0)
+        self.assertEqual(body["recent_questions"][0]["id"], asked.json()["question_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

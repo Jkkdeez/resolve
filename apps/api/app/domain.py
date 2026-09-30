@@ -77,3 +77,14 @@ class Resolution:
     decision: str
     rationale: str
     created_on: date
+
+
+@dataclass(frozen=True)
+class QuestionRecord:
+    """Auditable question event, kept separate from source content."""
+    id: str
+    actor_id: str
+    question: str
+    country: str
+    outcome: str
+    created_on: date

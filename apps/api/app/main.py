@@ -5,7 +5,7 @@ from threading import Lock
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from .domain import Actor, Resolution
+from .domain import Actor, QuestionRecord, Resolution
 from .reasoning import resolve
 from .seed import CLAIMS, CONFLICTS, EXPERTS, RESOLUTIONS, SOURCES
 
@@ -17,6 +17,7 @@ class KnowledgeStore:
     def __init__(self) -> None:
         self.conflicts = {conflict.id: conflict for conflict in CONFLICTS}
         self.resolutions: dict[str, Resolution] = {resolution.conflict_id: resolution for resolution in RESOLUTIONS}
+        self.questions: list[QuestionRecord] = []
         self.lock = Lock()
 
     def snapshot(self):
@@ -32,11 +33,22 @@ class KnowledgeStore:
             self.conflicts[conflict_id] = replace(self.conflicts[conflict_id], status="resolved")
             return resolution
 
+    def record_question(self, actor_id: str, question: str, country: str, outcome: str, created_on: date) -> QuestionRecord:
+        with self.lock:
+            record = QuestionRecord(f"q-{len(self.questions) + 1}", actor_id, question, country, outcome, created_on)
+            self.questions.append(record)
+            return record
+
+    def questions_for(self, actor_id: str) -> tuple[QuestionRecord, ...]:
+        with self.lock:
+            return tuple(record for record in self.questions if record.actor_id == actor_id)
+
     def reset(self) -> None:
         """Test-only reset; real deployments use a transaction-scoped repository."""
         with self.lock:
             self.conflicts = {conflict.id: conflict for conflict in CONFLICTS}
             self.resolutions = {resolution.conflict_id: resolution for resolution in RESOLUTIONS}
+            self.questions = []
 
 
 store = KnowledgeStore()
@@ -108,6 +120,8 @@ def answer_question(payload: AskRequest, actor: Actor = Depends(current_actor)):
         resolution = result["resolution"]
         expert = next((expert for expert in EXPERTS if expert.id == resolution.expert_id), None)
         result["resolution"] = serialize_resolution(resolution, expert)
+    question_event = store.record_question(actor.id, payload.question, payload.employee_country.upper(), result["outcome"], payload.as_of)
+    result["question_id"] = question_event.id
     return result
 
 
@@ -122,6 +136,39 @@ def list_conflicts(actor: Actor = Depends(current_actor)):
         for conflict in conflicts
         if conflict.claim_a_id in accessible_claim_ids and conflict.claim_b_id in accessible_claim_ids
     ]
+
+
+@app.get("/v1/knowledge/overview")
+def knowledge_overview(actor: Actor = Depends(current_actor)):
+    """Permissioned operational view of the ingest → claim → conflict pipeline."""
+    conflicts, resolutions = store.snapshot()
+    accessible_sources = [source for source in SOURCES if source.visibility.value in actor.roles]
+    source_ids = {source.id for source in accessible_sources}
+    accessible_claims = [claim for claim in CLAIMS if claim.source_id in source_ids]
+    claim_ids = {claim.id for claim in accessible_claims}
+    accessible_conflicts = [
+        conflict for conflict in conflicts
+        if conflict.claim_a_id in claim_ids and conflict.claim_b_id in claim_ids
+    ]
+    resolution_ids = {resolution.conflict_id for resolution in resolutions}
+    return {
+        "counts": {
+            "sources": len(accessible_sources),
+            "claims": len(accessible_claims),
+            "open_conflicts": sum(conflict.status == "open" for conflict in accessible_conflicts),
+            "human_resolutions": sum(conflict.id in resolution_ids for conflict in accessible_conflicts),
+        },
+        "stages": [
+            {"name": "Ingest", "detail": f"{len(accessible_sources)} permissioned sources", "state": "complete"},
+            {"name": "Structure", "detail": f"{len(accessible_claims)} contextual claims", "state": "complete"},
+            {"name": "Detect", "detail": f"{sum(conflict.status == 'open' for conflict in accessible_conflicts)} conflict needs review", "state": "attention" if any(conflict.status == "open" for conflict in accessible_conflicts) else "complete"},
+            {"name": "Learn", "detail": f"{sum(conflict.id in resolution_ids for conflict in accessible_conflicts)} expert decisions reusable", "state": "complete"},
+        ],
+        "recent_questions": [
+            {"id": record.id, "question": record.question, "outcome": record.outcome, "country": record.country}
+            for record in store.questions_for(actor.id)[-4:][::-1]
+        ],
+    }
 
 
 @app.post("/v1/conflicts/{conflict_id}/resolve")
