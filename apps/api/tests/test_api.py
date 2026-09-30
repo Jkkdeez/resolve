@@ -62,6 +62,23 @@ class ApiSecurityAndResolutionTests(unittest.TestCase):
         self.assertEqual(body["counts"]["open_conflicts"], 0)
         self.assertEqual(body["recent_questions"][0]["id"], asked.json()["question_id"])
 
+    def test_ingest_extracts_claim_and_opens_a_governed_conflict(self):
+        denied = self.client.post(
+            "/v1/sources/ingest",
+            headers={"x-resolve-user": "ordinary-consultant", "x-resolve-roles": "payroll"},
+            json={"title": "Customer addendum", "source_type": "signed_agreement", "content": "Qualifying overtime receives a 175% premium.", "country": "BE", "effective_from": "2026-01-01", "visibility": "payroll"},
+        )
+        self.assertEqual(denied.status_code, 403)
+
+        ingested = self.client.post(
+            "/v1/sources/ingest",
+            headers={"x-resolve-user": "knowledge-steward", "x-resolve-roles": "payroll,knowledge_admin"},
+            json={"title": "Customer addendum", "source_type": "signed_agreement", "content": "Qualifying overtime receives a 175% premium.", "country": "BE", "effective_from": "2026-01-01", "visibility": "payroll", "owner": "Payroll Compliance Belgium"},
+        )
+        self.assertEqual(ingested.status_code, 201)
+        self.assertEqual(ingested.json()["claims"][0]["value"], 175)
+        self.assertGreaterEqual(len(ingested.json()["conflicts"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -30,16 +30,20 @@ Next.js + TypeScript + Tailwind     FastAPI deterministic trust engine
                  └──────────── REST ────────────┘
                                                 │
                     PostgreSQL + pgvector ◄────┘
-                    (production adapter/model contract)
+                    (durable repository when DATABASE_URL is set)
                                                 │
                     Vertex AI / Gemini ◄──────── embeddings, extraction and comparison hooks
 ```
 
 The MVP deliberately keeps the final decisions deterministic. Gemini/Vertex is reserved for claim extraction, semantic retrieval and contradiction suggestion; it must not overrule dates, jurisdictions, permissions or source authority.
 
-`apps/api/app/ai.py` is the bounded Vertex/Gemini adapter seam and `apps/api/.env.example` documents the required Google Cloud configuration. It intentionally does not make model calls until a hackathon GCP project and credentials are supplied.
+`apps/api/app/ai.py` is the bounded Vertex/Gemini adapter and `apps/api/.env.example` documents the required Google Cloud configuration. With Application Default Credentials it can call Gemini for claim proposals and `text-embedding-004` for embeddings; model output remains untrusted until Resolve validates it.
 
-`apps/api/app/models.py` has the persistence contract for **Sources, Claims, Conflicts, Experts, Questions and Resolutions**, including pgvector embedding columns. The demo repository is in-memory to keep this first slice reproducible without a database or cloud credential.
+`apps/api/app/models.py` and `apps/api/app/repository.py` persist **Sources, Claims, Conflicts, Experts, Questions and Resolutions**, including pgvector embedding columns. The application uses PostgreSQL automatically when `DATABASE_URL` is set, and retains an in-memory adapter for instant, credential-free demos.
+
+## Governed ingestion pipeline
+
+`POST /v1/sources/ingest` is the connector-neutral data pipe. It accepts a bounded source payload, requires a `knowledge_admin` scope, records ownership/jurisdiction/effective dates/visibility, extracts deterministic policy claims, and opens a conflict only when two current official claims disagree. Future Teams, Drive and SD Worx connectors map into this contract; they do not bypass the trust engine.
 
 ## Security design
 
@@ -61,7 +65,7 @@ pnpm install
 pnpm dev:web
 ```
 
-Open `http://localhost:3000`. The frontend talks to the API through its development rewrite. For PostgreSQL + pgvector, run `docker compose up -d database`.
+Open `http://localhost:3000`. The frontend talks to the API through its development rewrite. For durable PostgreSQL + pgvector, run `docker compose up -d database`, then export the `DATABASE_URL` shown in `apps/api/.env.example` before starting the API.
 
 ## Test
 
@@ -69,8 +73,9 @@ Open `http://localhost:3000`. The frontend talks to the API through its developm
 PYTHONPATH=apps/api python3 -m unittest discover -s apps/api/tests -v
 ```
 
-The tests cover Scenario A, Scenario B’s safe expert escalation hook, and permission-filtered retrieval.
+The tests cover Scenarios A–C, permission-filtered retrieval, and the governed source ingestion/conflict-detection path.
 
-## Next slices
+## Deployment follow-up
 
-- Add the PostgreSQL repository/migrations, Vertex embeddings and authenticated Cloud Run deployment only after those visible flows work.
+- Run the API on Cloud Run with verified OIDC identity in place of development headers.
+- Configure a Google Cloud project and Application Default Credentials to activate the Vertex adapter.

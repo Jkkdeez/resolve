@@ -7,6 +7,7 @@ claims and semantic candidates, which remain subject to deterministic checks.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Protocol
 
 
@@ -25,19 +26,37 @@ class KnowledgeModel(Protocol):
 
 
 class VertexGeminiAdapter:
-    """Future Google Cloud adapter, intentionally not invoked in the MVP.
-
-    Wire `google-genai` / Vertex credentials here after a project is available.
-    Keep model outputs schema-validated and store proposed claims as untrusted
-    until they are reviewed or corroborated.
-    """
+    """Optional Vertex AI adapter with deliberately bounded responsibilities."""
     def __init__(self, project: str, location: str, model: str) -> None:
         self.project = project
         self.location = location
         self.model = model
 
+    def _client(self):
+        try:
+            from google import genai
+        except ImportError as exc:
+            raise RuntimeError("Install google-genai and configure Google Application Default Credentials.") from exc
+        return genai.Client(vertexai=True, project=self.project, location=self.location)
+
     def extract_claims(self, content: str) -> list[ExtractedClaim]:
-        raise NotImplementedError("Configure the Vertex client when GCP credentials are available.")
+        prompt = """Extract policy claims from this organisational source. Return JSON only: an array of objects with topic, statement, country, effective_from, effective_until. Use null when absent. Do not infer authority, ownership or access scope. Source:\n\n""" + content
+        response = self._client().models.generate_content(
+            model=self.model,
+            contents=prompt,
+            config={"response_mime_type": "application/json"},
+        )
+        raw = json.loads(response.text or "[]")
+        if not isinstance(raw, list):
+            raise ValueError("Vertex claim extraction returned a non-list response.")
+        return [ExtractedClaim(
+            topic=str(item["topic"]),
+            statement=str(item["statement"]),
+            country=item.get("country"),
+            effective_from=item.get("effective_from"),
+            effective_until=item.get("effective_until"),
+        ) for item in raw if isinstance(item, dict) and item.get("topic") and item.get("statement")]
 
     def embed(self, content: str) -> list[float]:
-        raise NotImplementedError("Configure a Vertex embedding model when GCP credentials are available.")
+        response = self._client().models.embed_content(model="text-embedding-004", contents=content)
+        return list(response.embeddings[0].values)

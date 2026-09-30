@@ -1,57 +1,25 @@
-from dataclasses import replace
 from datetime import date
-from threading import Lock
+import os
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from .domain import Actor, QuestionRecord, Resolution
+from .domain import Actor, Authority, Claim, Resolution, Source, Visibility
+from .pipeline import extract_claims
+from .repository import InMemoryKnowledgeStore, PostgresKnowledgeStore
 from .reasoning import resolve
 from .seed import CLAIMS, CONFLICTS, EXPERTS, RESOLUTIONS, SOURCES
 
 app = FastAPI(title="Resolve API", version="0.1.0")
 
 
-class KnowledgeStore:
-    """Replace with the PostgreSQL repository after the demo flow is validated."""
-    def __init__(self) -> None:
-        self.conflicts = {conflict.id: conflict for conflict in CONFLICTS}
-        self.resolutions: dict[str, Resolution] = {resolution.conflict_id: resolution for resolution in RESOLUTIONS}
-        self.questions: list[QuestionRecord] = []
-        self.lock = Lock()
-
-    def snapshot(self):
-        with self.lock:
-            return tuple(self.conflicts.values()), tuple(self.resolutions.values())
-
-    def save_resolution(self, conflict_id: str, expert_id: str, decision: str, rationale: str, created_on: date) -> Resolution:
-        with self.lock:
-            if conflict_id not in self.conflicts:
-                raise KeyError(conflict_id)
-            resolution = Resolution(f"res-{conflict_id}", conflict_id, expert_id, decision, rationale, created_on)
-            self.resolutions[conflict_id] = resolution
-            self.conflicts[conflict_id] = replace(self.conflicts[conflict_id], status="resolved")
-            return resolution
-
-    def record_question(self, actor_id: str, question: str, country: str, outcome: str, created_on: date) -> QuestionRecord:
-        with self.lock:
-            record = QuestionRecord(f"q-{len(self.questions) + 1}", actor_id, question, country, outcome, created_on)
-            self.questions.append(record)
-            return record
-
-    def questions_for(self, actor_id: str) -> tuple[QuestionRecord, ...]:
-        with self.lock:
-            return tuple(record for record in self.questions if record.actor_id == actor_id)
-
-    def reset(self) -> None:
-        """Test-only reset; real deployments use a transaction-scoped repository."""
-        with self.lock:
-            self.conflicts = {conflict.id: conflict for conflict in CONFLICTS}
-            self.resolutions = {resolution.conflict_id: resolution for resolution in RESOLUTIONS}
-            self.questions = []
-
-
-store = KnowledgeStore()
+database_url = os.getenv("DATABASE_URL")
+store = (
+    PostgresKnowledgeStore(database_url, sources=SOURCES, claims=CLAIMS, conflicts=CONFLICTS, experts=EXPERTS, resolutions=RESOLUTIONS)
+    if database_url
+    else InMemoryKnowledgeStore(sources=SOURCES, claims=CLAIMS, conflicts=CONFLICTS, resolutions=RESOLUTIONS)
+)
 
 
 class AskRequest(BaseModel):
@@ -65,6 +33,38 @@ class AskRequest(BaseModel):
 class ResolutionRequest(BaseModel):
     decision: str = Field(min_length=10, max_length=1000)
     rationale: str = Field(min_length=10, max_length=2000)
+
+
+class SourceIngestRequest(BaseModel):
+    """Generic connector payload; Teams, Drive and SD Worx adapters map here later."""
+    title: str = Field(min_length=3, max_length=255)
+    source_type: str = Field(min_length=3, max_length=50)
+    content: str = Field(min_length=20, max_length=50_000)
+    authority: str = Field(default="official")
+    owner: str | None = Field(default=None, max_length=255)
+    country: str | None = Field(default=None, min_length=2, max_length=2)
+    effective_from: date | None = None
+    effective_until: date | None = None
+    visibility: str = Field(default="internal")
+
+    @field_validator("authority")
+    @classmethod
+    def valid_authority(cls, value: str) -> str:
+        if value not in {item.value for item in Authority}:
+            raise ValueError("authority must be official, collaborative or unverified")
+        return value
+
+    @field_validator("visibility")
+    @classmethod
+    def valid_visibility(cls, value: str) -> str:
+        if value not in {item.value for item in Visibility}:
+            raise ValueError("visibility must be hr, payroll or internal")
+        return value
+
+    @field_validator("country")
+    @classmethod
+    def uppercase_country(cls, value: str | None) -> str | None:
+        return value.upper() if value else value
 
 
 def current_actor(x_resolve_user: str | None = Header(default=None), x_resolve_roles: str | None = Header(default=None)) -> Actor:
@@ -108,8 +108,8 @@ def health():
 
 @app.post("/v1/questions/answer")
 def answer_question(payload: AskRequest, actor: Actor = Depends(current_actor)):
-    conflicts, resolutions = store.snapshot()
-    result = resolve(actor=actor, question=payload.question, country=payload.employee_country.upper(), on_date=payload.as_of, duration_days=payload.working_days, sources=SOURCES, claims=CLAIMS, conflicts=conflicts, experts=EXPERTS, resolutions=resolutions)
+    sources, claims, conflicts, resolutions = store.snapshot()
+    result = resolve(actor=actor, question=payload.question, country=payload.employee_country.upper(), on_date=payload.as_of, duration_days=payload.working_days, sources=sources, claims=claims, conflicts=conflicts, experts=EXPERTS, resolutions=resolutions)
     result["candidates"] = [serialize_candidate(candidate) for candidate in result.get("candidates", [])]
     if result.get("winner"):
         result["winner"] = serialize_candidate(result["winner"])
@@ -128,9 +128,9 @@ def answer_question(payload: AskRequest, actor: Actor = Depends(current_actor)):
 @app.get("/v1/conflicts")
 def list_conflicts(actor: Actor = Depends(current_actor)):
     """Return only conflicts whose underlying sources are in the actor's scope."""
-    conflicts, resolutions = store.snapshot()
-    accessible_source_ids = {source.id for source in SOURCES if source.visibility.value in actor.roles}
-    accessible_claim_ids = {claim.id for claim in CLAIMS if claim.source_id in accessible_source_ids}
+    sources, claims, conflicts, _ = store.snapshot()
+    accessible_source_ids = {source.id for source in sources if source.visibility.value in actor.roles}
+    accessible_claim_ids = {claim.id for claim in claims if claim.source_id in accessible_source_ids}
     return [
         {"id": conflict.id, "kind": conflict.kind, "status": conflict.status, "severity": conflict.severity}
         for conflict in conflicts
@@ -141,10 +141,10 @@ def list_conflicts(actor: Actor = Depends(current_actor)):
 @app.get("/v1/knowledge/overview")
 def knowledge_overview(actor: Actor = Depends(current_actor)):
     """Permissioned operational view of the ingest → claim → conflict pipeline."""
-    conflicts, resolutions = store.snapshot()
-    accessible_sources = [source for source in SOURCES if source.visibility.value in actor.roles]
+    sources, claims, conflicts, resolutions = store.snapshot()
+    accessible_sources = [source for source in sources if source.visibility.value in actor.roles]
     source_ids = {source.id for source in accessible_sources}
-    accessible_claims = [claim for claim in CLAIMS if claim.source_id in source_ids]
+    accessible_claims = [claim for claim in claims if claim.source_id in source_ids]
     claim_ids = {claim.id for claim in accessible_claims}
     accessible_conflicts = [
         conflict for conflict in conflicts
@@ -171,6 +171,34 @@ def knowledge_overview(actor: Actor = Depends(current_actor)):
     }
 
 
+@app.post("/v1/sources/ingest", status_code=201)
+def ingest_source(payload: SourceIngestRequest, actor: Actor = Depends(current_actor)):
+    """Ingest one governed source through the shared connector contract."""
+    if "knowledge_admin" not in actor.roles:
+        raise HTTPException(status_code=403, detail="Only a knowledge administrator can ingest organisational sources.")
+    if payload.effective_until and payload.effective_from and payload.effective_until < payload.effective_from:
+        raise HTTPException(status_code=422, detail="effective_until cannot precede effective_from.")
+    source = Source(
+        id=f"src-{uuid4().hex[:12]}",
+        title=payload.title,
+        source_type=payload.source_type,
+        authority=Authority(payload.authority),
+        owner=payload.owner,
+        country=payload.country,
+        effective_from=payload.effective_from,
+        effective_until=payload.effective_until,
+        visibility=Visibility(payload.visibility),
+        content=payload.content,
+    )
+    claims = extract_claims(source)
+    conflicts = store.ingest(source, claims)
+    return {
+        "source": {"id": source.id, "title": source.title, "visibility": source.visibility.value, "authority": source.authority.value},
+        "claims": [{"id": claim.id, "topic": claim.topic, "statement": claim.statement, "value": claim.value} for claim in claims],
+        "conflicts": [{"id": conflict.id, "kind": conflict.kind, "severity": conflict.severity} for conflict in conflicts],
+    }
+
+
 @app.post("/v1/conflicts/{conflict_id}/resolve")
 def resolve_conflict(conflict_id: str, payload: ResolutionRequest, actor: Actor = Depends(current_actor)):
     # In production this is an OIDC group/entitlement check. Requiring both the
@@ -179,7 +207,7 @@ def resolve_conflict(conflict_id: str, payload: ResolutionRequest, actor: Actor 
     expert = next((expert for expert in EXPERTS if expert.id == actor.id), None)
     if not expert or "expert" not in actor.roles or "payroll" not in actor.roles:
         raise HTTPException(status_code=403, detail="Only the designated payroll expert can resolve this conflict.")
-    conflicts, _ = store.snapshot()
+    _, _, conflicts, _ = store.snapshot()
     conflict = next((conflict for conflict in conflicts if conflict.id == conflict_id), None)
     if not conflict:
         raise HTTPException(status_code=404, detail="Conflict not found.")
