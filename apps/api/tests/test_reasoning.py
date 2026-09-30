@@ -1,7 +1,7 @@
 import unittest
 from datetime import date
 
-from app.domain import Actor
+from app.domain import Actor, Resolution
 from app.reasoning import resolve
 from app.seed import CLAIMS, CONFLICTS, EXPERTS, RESOLUTIONS, SOURCES
 
@@ -29,6 +29,13 @@ class ResolveScenarioTests(unittest.TestCase):
         result = resolve(actor=Actor("hr-1", frozenset({"hr"})), question="How should overtime be calculated for this Belgian customer?", country="BE", on_date=date(2026, 9, 30), duration_days=None, sources=SOURCES, claims=CLAIMS, conflicts=CONFLICTS, experts=EXPERTS, resolutions=RESOLUTIONS)
         self.assertEqual(result["outcome"], "escalate")
         self.assertEqual(result["candidates"], [])
+
+    def test_scenario_c_uses_human_resolution_before_source_ranking(self):
+        decision = "Apply the 200% premium for this customer configuration; its signed customer agreement controls."
+        result = resolve(actor=Actor("payroll-1", frozenset({"payroll"})), question="How should overtime be calculated for this Belgian customer?", country="BE", on_date=date(2026, 9, 30), duration_days=None, sources=SOURCES, claims=CLAIMS, conflicts=CONFLICTS, experts=EXPERTS, resolutions=(Resolution("res-overtime", "conf-overtime-current", "exp-anna", decision, "Customer agreement verified.", date(2026, 9, 30)),))
+        self.assertEqual(result["outcome"], "resolved")
+        self.assertEqual(result["answer"], decision)
+        self.assertEqual(result["resolution"].expert_id, "exp-anna")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 Resolve is a Tectonic Hackathon proof of concept for the SD Worx challenge: it turns fragmented organisational information into a trusted, contextual answer. Rather than merely retrieve text, it evaluates structured claims against authority, jurisdiction, validity period, ownership, permission scope and known conflicts.
 
-## Working vertical slice — Scenario A
+## Working vertical slice
 
 Ask: **“Can a Belgian employee work remotely from Spain for eight working days?”**
 
@@ -15,6 +15,10 @@ The service retrieves five competing claims, then:
 - downranks an ownerless, unverified shared file.
 
 The UI presents evidence dimensions—not an unexplained probability—and records which evidence was accepted, rejected, or downranked.
+
+**Scenario B — safe escalation.** Ask how overtime should be calculated for a Belgian customer. Two current, authoritative claims conflict, so Resolve refuses to invent an answer and routes the question to Anna De Smet, Belgian Payroll Compliance.
+
+**Scenario C — reusable expert knowledge.** In Anna's expert workspace, confirm the signed customer agreement. The conflict changes to resolved and the next identical question returns that accountable, human-verified decision with its rationale.
 
 ## Architecture
 
@@ -67,6 +71,4 @@ The tests cover Scenario A, Scenario B’s safe expert escalation hook, and perm
 
 ## Next slices
 
-- **Scenario B:** expose the existing current-conflict escalation and assignment flow for Anna, Belgian Payroll Compliance.
-- **Scenario C:** write an expert decision to `resolutions`, attach it to the conflict, and prioritize it as human-verified reusable knowledge.
 - Add the PostgreSQL repository/migrations, Vertex embeddings and authenticated Cloud Run deployment only after those visible flows work.

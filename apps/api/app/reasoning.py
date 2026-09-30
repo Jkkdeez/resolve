@@ -65,23 +65,44 @@ def resolve(
     all_claims = [claim for claim in claims if claim.topic == topic and claim.source_id in source_by_id]
     candidates = [evaluate_claim(claim, source_by_id[claim.source_id], country=country, on_date=on_date) for claim in all_claims]
     accepted = [candidate for candidate in candidates if candidate.decision == "accepted"]
-    related_conflicts = [c for c in conflicts if c.status == "open" and {c.claim_a_id, c.claim_b_id}.issubset({claim.id for claim in all_claims})]
+    related_conflicts = [c for c in conflicts if {c.claim_a_id, c.claim_b_id}.issubset({claim.id for claim in all_claims})]
+    resolution_by_conflict = {resolution.conflict_id: resolution for resolution in resolutions}
+    human_resolution = next((resolution_by_conflict[conflict.id] for conflict in related_conflicts if conflict.id in resolution_by_conflict), None)
 
     if topic == "unknown" or not candidates:
         return {"outcome": "escalate", "message": "I could not find permissioned, applicable knowledge for this question.", "candidates": [], "expert": None}
 
-    if related_conflicts:
+    open_conflicts = [conflict for conflict in related_conflicts if conflict.status == "open"]
+    if open_conflicts and not human_resolution:
         expert = next((e for e in experts if topic in e.specialties and country in e.countries), None)
         return {
             "outcome": "escalate",
             "message": "I cannot safely resolve this: two current, authoritative claims conflict.",
             "candidates": candidates,
             "expert": expert,
-            "open_conflict_ids": [conflict.id for conflict in related_conflicts],
+            "open_conflict_ids": [conflict.id for conflict in open_conflicts],
         }
 
-    # Scenario C hook: a future persisted resolution has priority over source ranking.
-    resolution = next((r for r in resolutions if any(c.id == r.conflict_id for c in conflicts)), None)
+    # A human decision beats automatic ranking for a previously unresolved conflict.
+    if human_resolution:
+        expert = next((expert for expert in experts if expert.id == human_resolution.expert_id), None)
+        return {
+            "outcome": "resolved",
+            "answer": human_resolution.decision,
+            "winner": None,
+            "candidates": candidates,
+            "dimensions": {
+                "authority": "Human verified — designated payroll expert",
+                "jurisdiction": f"Match — {country}",
+                "freshness": f"Resolved on {human_resolution.created_on.isoformat()}",
+                "ownership": f"Decision owner — {expert.name if expert else human_resolution.expert_id}",
+                "corroboration": "Expert reviewed the conflicting current policies",
+                "conflicts": "Resolved — reusable organisational knowledge",
+            },
+            "resolution": human_resolution,
+            "expert": expert,
+        }
+
     winner = next((candidate for candidate in accepted if candidate.source.authority == Authority.OFFICIAL), accepted[0] if accepted else None)
     if not winner:
         return {"outcome": "escalate", "message": "The available evidence is not owned and verifiable enough to answer safely.", "candidates": candidates, "expert": None}
@@ -109,5 +130,5 @@ def resolve(
             "corroboration": "Teams update independently confirms the 2026 change" if topic == "remote_work_abroad_approval_threshold" else "No conflicting current sources",
             "conflicts": "Historical conflict rejected as superseded" if topic == "remote_work_abroad_approval_threshold" else "None",
         },
-        "resolution": resolution,
+        "resolution": None,
     }
