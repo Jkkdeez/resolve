@@ -1,9 +1,11 @@
-.DS_Store
+# Local agent-tooling instructions are environment-specific and never product files.
+AGENTS.md
+CLAUDE.md
+
+# Local development outputs
 node_modules/
-.pnpm-store/
 .next/
+.pnpm-store/
 .venv/
 __pycache__/
-.pytest_cache/
-.env
-coverage/
+*.pyc
