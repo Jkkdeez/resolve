@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+.pnpm-store/
+.next/
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+coverage/
