@@ -20,6 +20,8 @@ The UI presents evidence dimensions—not an unexplained probability—and recor
 
 **Scenario C — reusable expert knowledge.** In Anna's expert workspace, confirm the signed customer agreement. The conflict changes to resolved and the next identical question returns that accountable, human-verified decision with its rationale.
 
+The companion **Knowledge lifecycle** panel is backed by `GET /v1/knowledge/overview`: it shows the actor-scoped path from ingested sources to contextual claims, conflicts, expert resolutions and recent question events. It is intentionally a governed data pipeline view, so Payroll never sees HR-only knowledge and vice versa.
+
 ## Architecture
 
 ```text
