@@ -12,8 +12,10 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 ARG RESOLVE_API_URL
 ENV RESOLVE_API_URL=${RESOLVE_API_URL}
-RUN pnpm --dir apps/web build && chown -R resolve:resolve /app
+RUN pnpm --dir apps/web build \
+    && cp -r apps/web/.next/static apps/web/.next/standalone/apps/web/.next/static \
+    && chown -R resolve:resolve /app
 
 USER resolve
 EXPOSE 8080
-CMD ["sh", "-c", "pnpm --dir apps/web start -p ${PORT}"]
+CMD ["sh", "-c", "node apps/web/.next/standalone/apps/web/server.js"]

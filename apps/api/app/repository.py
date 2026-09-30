@@ -102,9 +102,12 @@ class PostgresKnowledgeStore:
             if session.scalar(select(SourceModel.id).limit(1)):
                 return
             session.add_all([SourceModel(id=source.id, title=source.title, source_type=source.source_type, authority=source.authority.value, owner=source.owner, country=source.country, effective_from=source.effective_from, effective_until=source.effective_until, visibility_roles=[source.visibility.value], content=source.content, embedding=None) for source in sources])
+            session.flush()
             session.add_all([ClaimModel(id=claim.id, source_id=claim.source_id, topic=claim.topic, statement=claim.statement, country=claim.country, effective_from=claim.effective_from, effective_until=claim.effective_until, value=claim.value, embedding=None) for claim in claims])
+            session.flush()
             session.add_all([ConflictModel(id=conflict.id, claim_a_id=conflict.claim_a_id, claim_b_id=conflict.claim_b_id, kind=conflict.kind, status=conflict.status, severity=conflict.severity) for conflict in conflicts])
             session.add_all([ExpertModel(id=expert.id, name=expert.name, team=expert.team, specialties=list(expert.specialties), countries=list(expert.countries)) for expert in experts])
+            session.flush()
             session.add_all([ResolutionModel(id=resolution.id, conflict_id=resolution.conflict_id, expert_id=resolution.expert_id, decision=resolution.decision, rationale=resolution.rationale, created_at=datetime.combine(resolution.created_on, datetime.min.time(), tzinfo=timezone.utc)) for resolution in resolutions])
             session.commit()
 
@@ -144,7 +147,9 @@ class PostgresKnowledgeStore:
         conflicts = detect_conflicts(claims, source, sources, existing_claims)
         with Session(self.engine) as session:
             session.add(SourceModel(id=source.id, title=source.title, source_type=source.source_type, authority=source.authority.value, owner=source.owner, country=source.country, effective_from=source.effective_from, effective_until=source.effective_until, visibility_roles=[source.visibility.value], content=source.content, embedding=None))
+            session.flush()
             session.add_all([ClaimModel(id=claim.id, source_id=claim.source_id, topic=claim.topic, statement=claim.statement, country=claim.country, effective_from=claim.effective_from, effective_until=claim.effective_until, value=claim.value, embedding=None) for claim in claims])
+            session.flush()
             session.add_all([ConflictModel(id=conflict.id, claim_a_id=conflict.claim_a_id, claim_b_id=conflict.claim_b_id, kind=conflict.kind, status=conflict.status, severity=conflict.severity) for conflict in conflicts])
             session.commit()
         return conflicts

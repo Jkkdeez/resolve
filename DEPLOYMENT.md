@@ -14,6 +14,7 @@ docker compose up --build
 ```
 
 Open `http://localhost:3000`; the API is available at `http://localhost:8000/health`.
+PostgreSQL is exposed on port `5433` to avoid clashing with a locally installed database; containers use the internal `database:5432` address.
 
 `docker compose down` stops the stack while preserving the local database. `docker compose down -v` also deletes the local demo data.
 
