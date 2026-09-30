@@ -95,6 +95,7 @@ export default function Home() {
 
     <section className="workspace">
       <div className="main-column">
+        <div className="demo-path"><span>DEMO PATH</span><strong>Ask</strong><i>→</i><strong>Inspect</strong><i>→</i><strong>Assign ownership</strong></div>
         <div className="scenario-picker" aria-label="Demo scenarios">{(Object.keys(scenarios) as Scenario[]).map((key) => <button key={key} className={scenario === key ? "selected" : ""} onClick={() => choose(key)}>{scenarios[key].label}</button>)}</div>
         <form onSubmit={ask} className="ask">
           <div className="ask-title"><span>01</span><label htmlFor="question">Decision console</label><small>Context locked</small></div>
@@ -121,6 +122,8 @@ function PipelinePanel({ overview }: { overview: Overview | null }) {
 }
 
 function ResultView({ result, onEscalate }: { result: Result; onEscalate: () => void }) {
+  const receiptOwner = result.resolution?.expert.name || result.expert?.name || result.dimensions?.ownership || "No accountable owner";
+  const guardrail = result.outcome === "escalate" ? "Resolve declined to choose between live conflicts." : result.resolution ? "A designated expert accepted accountability." : "Scope, jurisdiction, freshness and ownership were checked.";
   return <section className="results">
     <div className={`answer ${result.outcome}`}>
       <p className="eyebrow">{result.resolution ? "HUMAN-VERIFIED KNOWLEDGE" : result.outcome === "resolved" ? "DECISION READY" : "SAFE ESCALATION"}</p>
@@ -128,6 +131,10 @@ function ResultView({ result, onEscalate }: { result: Result; onEscalate: () => 
       {result.resolution && <p className="resolution-copy"><strong>{result.resolution.expert.name}</strong> · {result.resolution.expert.team} · resolved {result.resolution.created_on}. {result.resolution.rationale}</p>}
       {result.outcome === "escalate" && result.expert && <><div className="expert">Assigned expert <strong>{result.expert.name}</strong> · {result.expert.team}</div><button className="expert-action" onClick={onEscalate}>Open Anna’s expert workspace <span>→</span></button></>}
     </div>
+    <section className={`receipt ${result.outcome}`}>
+      <div className="receipt-title"><span className="receipt-mark">R</span><div><p>RESOLVE RECEIPT</p><strong>A decision people can own.</strong></div><small>{result.outcome === "resolved" ? "READY" : "HOLD"}</small></div>
+      <div className="receipt-grid"><div><span>Decision state</span><strong>{result.outcome === "resolved" ? "Safe to act" : "Awaiting expert"}</strong></div><div><span>Accountability</span><strong>{receiptOwner}</strong></div><div><span>Guardrail applied</span><strong>{guardrail}</strong></div></div>
+    </section>
     {result.dimensions && <div className="dimensions"><div className="section-title"><p className="eyebrow">EXPLAINABLE DECISION</p><h3>Why Resolve can stand behind this</h3></div><div className="dimension-grid">{Object.entries(result.dimensions).map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div></div>}
     <div className="evidence"><div><p className="eyebrow">EVIDENCE LEDGER</p><h3>{result.candidates.length} claims surfaced. Every one accounted for.</h3></div>{result.candidates.map((candidate) => <article key={candidate.source.id} className={candidate.decision}><div className="source-head"><div><Badge decision={candidate.decision} /><h4>{candidate.source.title}</h4><p>{candidate.source.type.replaceAll("_", " ")} · {candidate.source.country || "No jurisdiction"} · {candidate.source.owner || "No owner"}</p></div><span className="source-id">{candidate.source.id.slice(-6)}</span></div><blockquote>{candidate.claim}</blockquote><ul>{candidate.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></article>)}</div>
     <footer>{result.resolution ? "Scenario C complete — the expert decision is now a governed knowledge asset." : result.outcome === "escalate" ? "Scenario B — Resolve will not make an arbitrary choice between authoritative conflicts." : "Scenario A — stale, wrong-jurisdiction and ownerless evidence never enters the decision."}</footer>
